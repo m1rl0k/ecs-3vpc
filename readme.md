@@ -112,52 +112,6 @@ ALB-->>C: Direct Response
 end
 ```
 
-## Deployment Workflow
-```mermaid
-graph TD
-    subgraph Preparation
-        A[Build Container Images]
-        B[Push to ECR]
-        C[Prepare Parameters]
-    end
-
-    subgraph Infrastructure
-        D[Deploy Network Layer]
-        E[Deploy Security Layer]
-        F[Deploy Database Layer]
-        G[Deploy Application Layer]
-    end
-
-    subgraph Validation
-        H[Verify Certificate]
-        I[Check DNS Records]
-        J[Test Database]
-        K[Verify Applications]
-    end
-
-    A --> B
-    B --> C
-    C --> D
-    D --> E
-    E --> F
-    F --> G
-    G --> H
-    H --> I
-    I --> J
-    J --> K
-
-    style A fill:#e3f2fd
-    style B fill:#e3f2fd
-    style C fill:#e3f2fd
-    style D fill:#e8f5e9
-    style E fill:#e8f5e9
-    style F fill:#e8f5e9
-    style G fill:#e8f5e9
-    style H fill:#fff3e0
-    style I fill:#fff3e0
-    style J fill:#fff3e0
-    style K fill:#fff3e0
-```
 ## Architecture Components
 
 ### Network Layer
