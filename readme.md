@@ -1,7 +1,156 @@
 # AWS Infrastructure as Code - Multi-Environment Setup
 
 This repository contains CloudFormation templates for deploying a complete production-ready infrastructure on AWS, supporting multiple environments (dev/staging/prod) with isolated networking and security configurations.
+```markdown
+# AWS Infrastructure Diagrams
 
+## Infrastructure Architecture
+```mermaid
+flowchart TB
+    subgraph DNS["DNS & Certificate"]
+        R53[Route 53]
+        ACM[ACM Certificate]
+    end
+
+    subgraph Public["Public Zone"]
+        ALB[Application Load Balancer]
+        IGW[Internet Gateway]
+        NAT[NAT Gateway]
+    end
+
+    subgraph Private["Private Zone"]
+        direction TB
+        subgraph ECS["ECS Fargate Cluster"]
+            direction LR
+            Node[Node.js Container]
+            Python[Python Container]
+        end
+        
+        subgraph Storage["Database Layer"]
+            RDS[(RDS PostgreSQL)]
+            SM[Secrets Manager]
+            SSM[SSM Parameter Store]
+        end
+    end
+
+    subgraph Monitoring["Monitoring & Logging"]
+        CW[CloudWatch Logs]
+        AS[Auto Scaling]
+    end
+
+    Client-->R53
+    R53-->ALB
+    ACM-.->ALB
+    
+    ALB-->|/api/*|Python
+    ALB-->|/*|Node
+    
+    IGW-->ALB
+    NAT-->ECS
+    
+    Python-->RDS
+    Node-->RDS
+    
+    Python & Node-->SM
+    Python & Node-->SSM
+    Python & Node-->CW
+    
+    AS-->ECS
+    
+    classDef public fill:#fff,stroke:#1E88E5,stroke-width:2px
+    classDef private fill:#fff,stroke:#43A047,stroke-width:2px
+    classDef storage fill:#fff,stroke:#FB8C00,stroke-width:2px
+    classDef monitoring fill:#fff,stroke:#6D4C41,stroke-width:2px
+    
+    class ALB,IGW,NAT public
+    class Node,Python private
+    class RDS,SM,SSM storage
+    class CW,AS monitoring
+```
+
+## Request Flow
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant R53 as Route 53
+    participant ALB as Load Balancer
+    participant N as Node.js Container
+    participant P as Python Container
+    participant RDS as RDS Database
+    participant SM as Secrets Manager
+    participant SSM as Parameter Store
+    participant CW as CloudWatch
+
+    C->>R53: DNS Request
+    R53->>ALB: Forward to ALB
+    
+    alt Frontend Request
+        ALB->>N: Route to Node.js
+        N->>SSM: Get DB Endpoint
+        N->>SM: Get DB Credentials
+        N->>RDS: Query Database
+        RDS-->>N: Database Response
+        N-->>ALB: HTTP Response
+        N->>CW: Log Request
+    else API Request (/api/*)
+        ALB->>P: Route to Python
+        P->>SSM: Get DB Endpoint
+        P->>SM: Get DB Credentials
+        P->>RDS: Query Database
+        RDS-->>P: Database Response
+        P-->>ALB: HTTP Response
+        P->>CW: Log Request
+    end
+    
+    ALB-->>C: Final Response
+```
+
+## Deployment Workflow
+```mermaid
+graph TD
+    subgraph Preparation
+        A[Build Container Images]
+        B[Push to ECR]
+        C[Prepare Parameters]
+    end
+
+    subgraph Infrastructure
+        D[Deploy Network Layer]
+        E[Deploy Security Layer]
+        F[Deploy Database Layer]
+        G[Deploy Application Layer]
+    end
+
+    subgraph Validation
+        H[Verify Certificate]
+        I[Check DNS Records]
+        J[Test Database]
+        K[Verify Applications]
+    end
+
+    A --> B
+    B --> C
+    C --> D
+    D --> E
+    E --> F
+    F --> G
+    G --> H
+    H --> I
+    I --> J
+    J --> K
+
+    style A fill:#e3f2fd
+    style B fill:#e3f2fd
+    style C fill:#e3f2fd
+    style D fill:#e8f5e9
+    style E fill:#e8f5e9
+    style F fill:#e8f5e9
+    style G fill:#e8f5e9
+    style H fill:#fff3e0
+    style I fill:#fff3e0
+    style J fill:#fff3e0
+    style K fill:#fff3e0
+```
 ## Architecture Components
 
 ### Network Layer
