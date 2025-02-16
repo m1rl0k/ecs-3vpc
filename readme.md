@@ -70,38 +70,46 @@ class CW,AS monitoring
 ## Request Flow
 ```mermaid
 sequenceDiagram
-    participant C as Client
-    participant R53 as Route 53
-    participant ALB as Load Balancer
-    participant N as Node.js Container
-    participant P as Python Container
-    participant RDS as RDS Database
-    participant SM as Secrets Manager
-    participant SSM as Parameter Store
-    participant CW as CloudWatch
-
-    C->>R53: DNS Request
-    R53->>ALB: Forward to ALB
-    
-    alt Frontend Request
-        ALB->>N: Route to Node.js
-        N->>SSM: Get DB Endpoint
-        N->>SM: Get DB Credentials
-        N->>RDS: Query Database
-        RDS-->>N: Database Response
-        N-->>ALB: HTTP Response
-        N->>CW: Log Request
-    else API Request (/api/*)
-        ALB->>P: Route to Python
-        P->>SSM: Get DB Endpoint
-        P->>SM: Get DB Credentials
-        P->>RDS: Query Database
-        RDS-->>P: Database Response
-        P-->>ALB: HTTP Response
-        P->>CW: Log Request
-    end
-    
-    ALB-->>C: Final Response
+participant C as Client
+participant R53 as Route 53
+participant CF as CloudFront
+participant WAF as WAF
+participant ALB as Load Balancer
+participant N as Node.js Container
+participant P as Python Container
+participant RDS as RDS Database
+participant SM as Secrets Manager
+participant CW as CloudWatch
+C->>R53: DNS Request
+alt Production Environment
+R53->>CF: Forward to CloudFront
+CF->>WAF: Security Check
+WAF->>ALB: Forward Request
+else Dev/Staging Environment
+R53->>ALB: Forward to ALB
+end
+alt Frontend Request
+ALB->>N: Route to Node.js
+N->>SM: Get DB Credentials
+N->>RDS: Query Database
+RDS-->>N: Database Response
+N-->>ALB: HTTP Response
+N->>CW: Log Request
+else API Request (/api/)
+ALB->>P: Route to Python
+P->>SM: Get DB Credentials
+P->>RDS: Query Database
+RDS-->>P: Database Response
+P-->>ALB: HTTP Response
+P->>CW: Log Request
+end
+alt Production Environment
+ALB-->>WAF: Response
+WAF-->>CF: Security Check
+CF-->>C: Cached Response
+else Dev/Staging Environment
+ALB-->>C: Direct Response
+end
 ```
 
 ## Deployment Workflow
