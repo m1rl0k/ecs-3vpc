@@ -69,6 +69,29 @@ Mappings:
       ContainerCPU: "2048"    # 2 vCPU each
       ContainerMemory: "2048"  # 2 GB each
 
+  ScalingConfig:
+    dev:
+      MinCapacity: 1
+      MaxCapacity: 4
+      CPUTarget: 80
+      MemoryTarget: 85
+      ScaleInCooldown: 300  # 5 minutes
+      ScaleOutCooldown: 180 # 3 minutes
+    staging:
+      MinCapacity: 1
+      MaxCapacity: 4
+      CPUTarget: 80
+      MemoryTarget: 85
+      ScaleInCooldown: 300
+      ScaleOutCooldown: 180
+    prod:
+      MinCapacity: 2        # Always have at least 2 tasks
+      MaxCapacity: 8        # Can scale up to 8 tasks
+      CPUTarget: 70         # Scale at lower CPU utilization
+      MemoryTarget: 75      # Scale at lower memory utilization
+      ScaleInCooldown: 600  # 10 minutes - more conservative scale in
+      ScaleOutCooldown: 120 # 2 minutes - faster scale out
+
 Conditions:
   IsProd: !Equals [!Ref Env, "prod"]
 
@@ -665,8 +688,8 @@ Resources:
     Type: AWS::ApplicationAutoScaling::ScalableTarget
     DependsOn: ECSService
     Properties:
-      MaxCapacity: 4
-      MinCapacity: 1
+      MaxCapacity: !FindInMap [ScalingConfig, !Ref Env, MaxCapacity]
+      MinCapacity: !FindInMap [ScalingConfig, !Ref Env, MinCapacity]
       ResourceId: !Join
         - /
         - - service
@@ -687,9 +710,9 @@ Resources:
       TargetTrackingScalingPolicyConfiguration:
         PredefinedMetricSpecification:
           PredefinedMetricType: ECSServiceAverageCPUUtilization
-        TargetValue: 70.0
-        ScaleInCooldown: 60
-        ScaleOutCooldown: 60
+        TargetValue: !FindInMap [ScalingConfig, !Ref Env, CPUTarget]
+        ScaleInCooldown: !FindInMap [ScalingConfig, !Ref Env, ScaleInCooldown]
+        ScaleOutCooldown: !FindInMap [ScalingConfig, !Ref Env, ScaleOutCooldown]
 
   # Memory Scaling Policy
   MemoryScalingPolicy:
@@ -702,9 +725,9 @@ Resources:
       TargetTrackingScalingPolicyConfiguration:
         PredefinedMetricSpecification:
           PredefinedMetricType: ECSServiceAverageMemoryUtilization
-        TargetValue: 85.0
-        ScaleInCooldown: 60
-        ScaleOutCooldown: 60
+        TargetValue: !FindInMap [ScalingConfig, !Ref Env, MemoryTarget]
+        ScaleInCooldown: !FindInMap [ScalingConfig, !Ref Env, ScaleInCooldown]
+        ScaleOutCooldown: !FindInMap [ScalingConfig, !Ref Env, ScaleOutCooldown]
 
   ####################
   # DNS Record for Domain
