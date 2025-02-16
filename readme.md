@@ -7,65 +7,64 @@ This repository contains CloudFormation templates for deploying a complete produ
 ## Infrastructure Architecture
 ```mermaid
 flowchart TB
-    subgraph DNS["DNS & Certificate"]
-        R53[Route 53]
-        ACM[ACM Certificate]
-    end
+subgraph DNS["DNS & Certificate"]
+R53[Route 53]
+ACM[ACM Certificate]
+end
+subgraph Edge["Edge Layer (Prod Only)"]
+CF[CloudFront]
+WAF[WAF]
+end
+subgraph Public["Public Zone"]
+ALB[Application Load Balancer]
+IGW[Internet Gateway]
+NAT[NAT Gateway]
+end
+subgraph Private["Private Zone"]
+direction TB
+subgraph ECS["ECS Fargate Cluster"]
+direction LR
+Node[Node.js Container]
+Python[Python Container]
+end
+subgraph Storage["Database Layer"]
+RDS[(RDS PostgreSQL)]
+SM[Secrets Manager]
+SSM[SSM Parameter Store]
+end
+end
+subgraph Monitoring["Monitoring & Logging"]
+CW[CloudWatch Logs]
+AS[Auto Scaling]
+end
+Client-->R53
+R53-->CF
+CF-->WAF
+WAF-->ALB
+R53-.->|dev/staging|ALB
+ACM-.->ALB
+ACM-.->CF
+ALB-->|/api/|Python
+ALB-->|/|Node
+IGW-->ALB
+NAT-->ECS
+Python-->RDS
+Node-->RDS
+Python & Node-->SM
+Python & Node-->SSM
+Python & Node-->CW
+AS-->ECS
+classDef edge fill:#fff,stroke:#E91E63,stroke-width:2px
+classDef public fill:#fff,stroke:#1E88E5,stroke-width:2px
+classDef private fill:#fff,stroke:#43A047,stroke-width:2px
+classDef storage fill:#fff,stroke:#FB8C00,stroke-width:2px
+classDef monitoring fill:#fff,stroke:#6D4C41,stroke-width:2px
+class CF,WAF edge
+class ALB,IGW,NAT public
+class Node,Python private
+class RDS,SM,SSM storage
+class CW,AS monitoring
 
-    subgraph Public["Public Zone"]
-        ALB[Application Load Balancer]
-        IGW[Internet Gateway]
-        NAT[NAT Gateway]
-    end
-
-    subgraph Private["Private Zone"]
-        direction TB
-        subgraph ECS["ECS Fargate Cluster"]
-            direction LR
-            Node[Node.js Container]
-            Python[Python Container]
-        end
-        
-        subgraph Storage["Database Layer"]
-            RDS[(RDS PostgreSQL)]
-            SM[Secrets Manager]
-            SSM[SSM Parameter Store]
-        end
-    end
-
-    subgraph Monitoring["Monitoring & Logging"]
-        CW[CloudWatch Logs]
-        AS[Auto Scaling]
-    end
-
-    Client-->R53
-    R53-->ALB
-    ACM-.->ALB
-    
-    ALB-->|/api/*|Python
-    ALB-->|/*|Node
-    
-    IGW-->ALB
-    NAT-->ECS
-    
-    Python-->RDS
-    Node-->RDS
-    
-    Python & Node-->SM
-    Python & Node-->SSM
-    Python & Node-->CW
-    
-    AS-->ECS
-    
-    classDef public fill:#fff,stroke:#1E88E5,stroke-width:2px
-    classDef private fill:#fff,stroke:#43A047,stroke-width:2px
-    classDef storage fill:#fff,stroke:#FB8C00,stroke-width:2px
-    classDef monitoring fill:#fff,stroke:#6D4C41,stroke-width:2px
-    
-    class ALB,IGW,NAT public
-    class Node,Python private
-    class RDS,SM,SSM storage
-    class CW,AS monitoring
 ```
 
 ## Request Flow
