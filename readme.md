@@ -1,7 +1,7 @@
 # AWS Infrastructure as Code - Multi-Environment Setup
 
 This repository contains CloudFormation templates for deploying a complete production-ready infrastructure on AWS, supporting multiple environments (dev/staging/prod) with isolated networking and security configurations.
-```markdown
+
 # AWS Infrastructure Diagrams
 
 ## Infrastructure Architecture
