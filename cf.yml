@@ -1,0 +1,725 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: AWS Infrastructure with VPCs, ECS, RDS, ALBs, Route 53 & ACM
+
+Parameters:
+  Env:
+    Type: String
+    AllowedValues: [dev, staging, prod]
+    Default: dev
+    Description: "Environment (dev, staging, prod)"
+
+  HostedZoneName:
+    Type: String
+    Default: "example.com"
+    Description: "Route 53 hosted zone name"
+
+  HostedZoneId:
+    Type: String
+    Description: "Route 53 hosted zone ID"
+
+  NodeContainerImage:
+    Type: String
+    Description: "Node.js container image URI"
+
+  PythonContainerImage:
+    Type: String
+    Description: "Python container image URI"
+
+Mappings:
+  VPCConfig:
+    dev:
+      CIDR: "10.0.0.0/16"
+      PublicSubnet1: "10.0.1.0/24"
+      PublicSubnet2: "10.0.2.0/24"
+      PrivateSubnet1: "10.0.3.0/24"
+      PrivateSubnet2: "10.0.4.0/24"
+      AZ1: "us-east-1a"
+      AZ2: "us-east-1b"
+    staging:
+      CIDR: "10.1.0.0/16"
+      PublicSubnet1: "10.1.1.0/24"
+      PublicSubnet2: "10.1.2.0/24"
+      PrivateSubnet1: "10.1.3.0/24"
+      PrivateSubnet2: "10.1.4.0/24"
+      AZ1: "us-east-1a"
+      AZ2: "us-east-1b"
+    prod:
+      CIDR: "10.2.0.0/16"
+      PublicSubnet1: "10.2.1.0/24"
+      PublicSubnet2: "10.2.2.0/24"
+      PrivateSubnet1: "10.2.3.0/24"
+      PrivateSubnet2: "10.2.4.0/24"
+      AZ1: "us-east-1a"
+      AZ2: "us-east-1b"
+
+Conditions:
+  IsProd: !Equals [!Ref Env, "prod"]
+
+Resources:
+  ####################
+  # VPC & Networking
+  ####################
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !FindInMap [VPCConfig, !Ref Env, CIDR]
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: !Sub "${Env}-VPC"
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub "${Env}-IGW"
+
+  AttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
+
+  NatGatewayEIP:
+    Type: AWS::EC2::EIP
+    DependsOn: AttachGateway
+    Properties:
+      Domain: vpc
+
+  # Subnets
+  PublicSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: !FindInMap [VPCConfig, !Ref Env, PublicSubnet1]
+      AvailabilityZone: !FindInMap [VPCConfig, !Ref Env, AZ1]
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub "${Env}-Public-1"
+
+  PublicSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: !FindInMap [VPCConfig, !Ref Env, PublicSubnet2]
+      AvailabilityZone: !FindInMap [VPCConfig, !Ref Env, AZ2]
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub "${Env}-Public-2"
+
+  PrivateSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: !FindInMap [VPCConfig, !Ref Env, PrivateSubnet1]
+      AvailabilityZone: !FindInMap [VPCConfig, !Ref Env, AZ1]
+      Tags:
+        - Key: Name
+          Value: !Sub "${Env}-Private-1"
+
+  PrivateSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: !FindInMap [VPCConfig, !Ref Env, PrivateSubnet2]
+      AvailabilityZone: !FindInMap [VPCConfig, !Ref Env, AZ2]
+      Tags:
+        - Key: Name
+          Value: !Sub "${Env}-Private-2"
+
+  NatGateway:
+    Type: AWS::EC2::NatGateway
+    DependsOn: PublicSubnet1
+    Properties:
+      AllocationId: !GetAtt NatGatewayEIP.AllocationId
+      SubnetId: !Ref PublicSubnet1
+      Tags:
+        - Key: Name
+          Value: !Sub "${Env}-NAT"
+# Route Tables
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub "${Env}-Public-RT"
+
+  PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub "${Env}-Private-RT"
+
+  PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: AttachGateway
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  PrivateRoute:
+    Type: AWS::EC2::Route
+    DependsOn: NatGateway
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGateway
+
+  PublicSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet1
+      RouteTableId: !Ref PublicRouteTable
+
+  PublicSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet2
+      RouteTableId: !Ref PublicRouteTable
+
+  PrivateSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnet1
+      RouteTableId: !Ref PrivateRouteTable
+
+  PrivateSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnet2
+      RouteTableId: !Ref PrivateRouteTable
+
+  ####################
+  # Security Groups
+  ####################
+  ALBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      VpcId: !Ref VPC
+      GroupDescription: ALB Security Group
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: !Sub "${Env}-alb-sg"
+
+  ECSClusterSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      VpcId: !Ref VPC
+      GroupDescription: ECS Security Group
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 3000
+          ToPort: 3000
+          SourceSecurityGroupId: !Ref ALBSecurityGroup
+        - IpProtocol: tcp
+          FromPort: 5000
+          ToPort: 5000
+          SourceSecurityGroupId: !Ref ALBSecurityGroup
+      Tags:
+        - Key: Name
+          Value: !Sub "${Env}-ecs-sg"
+
+  ECSClusterSecurityGroupSelfReference:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref ECSClusterSecurityGroup
+      IpProtocol: -1
+      FromPort: -1
+      ToPort: -1
+      SourceSecurityGroupId: !Ref ECSClusterSecurityGroup
+      Description: Allow containers to talk to each other
+
+  RDSSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      VpcId: !Ref VPC
+      GroupDescription: RDS Security Group
+      Tags:
+        - Key: Name
+          Value: !Sub "${Env}-rds-sg"
+
+  RDSSecurityGroupIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref RDSSecurityGroup
+      IpProtocol: tcp
+      FromPort: 5432
+      ToPort: 5432
+      SourceSecurityGroupId: !Ref ECSClusterSecurityGroup
+      Description: Allow ECS tasks to connect to RDS
+
+  ####################
+  # ACM Certificate
+  ####################
+  ACMCertificate:
+    Type: AWS::CertificateManager::Certificate
+    Properties:
+      DomainName: !Sub "${Env}.${HostedZoneName}"
+      ValidationMethod: DNS
+      DomainValidationOptions:
+        - DomainName: !Sub "${Env}.${HostedZoneName}"
+          HostedZoneId: !Ref HostedZoneId
+
+  ####################
+  # Load Balancer Resources
+  ####################
+  ALB:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    DependsOn: 
+      - PublicSubnet1
+      - PublicSubnet2
+      - ALBSecurityGroup
+    Properties:
+      Name: !Sub "${Env}-alb"
+      Scheme: !If [IsProd, "internet-facing", "internal"]
+      LoadBalancerAttributes:
+        - Key: idle_timeout.timeout_seconds
+          Value: "60"
+        - Key: routing.http2.enabled
+          Value: "true"
+      SecurityGroups:
+        - !Ref ALBSecurityGroup
+      Subnets:
+        - !Ref PublicSubnet1
+        - !Ref PublicSubnet2
+      Tags:
+        - Key: Name
+          Value: !Sub "${Env}-ALB"
+
+  # Target Groups
+  NodeALBTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Sub "${Env}-node-tg"
+      Port: 3000
+      Protocol: HTTP
+      TargetType: ip
+      VpcId: !Ref VPC
+      HealthCheckPath: /health
+      HealthCheckIntervalSeconds: 30
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 3
+      HealthCheckTimeoutSeconds: 5
+      TargetGroupAttributes:
+        - Key: deregistration_delay.timeout_seconds
+          Value: "30"
+
+  PythonALBTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Sub "${Env}-python-tg"
+      Port: 5000
+      Protocol: HTTP
+      TargetType: ip
+      VpcId: !Ref VPC
+      HealthCheckPath: /health
+      HealthCheckIntervalSeconds: 30
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 3
+      HealthCheckTimeoutSeconds: 5
+      TargetGroupAttributes:
+        - Key: deregistration_delay.timeout_seconds
+          Value: "30"
+
+  # HTTPS Listener
+  ALBListenerHTTPS:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    DependsOn: 
+      - ACMCertificate
+      - ALB
+    Properties:
+      LoadBalancerArn: !Ref ALB
+      Port: 443
+      Protocol: HTTPS
+      Certificates:
+        - CertificateArn: !Ref ACMCertificate
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref NodeALBTargetGroup
+
+  # HTTP to HTTPS Redirect
+  ALBListenerHTTP:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    DependsOn: ALB
+    Properties:
+      LoadBalancerArn: !Ref ALB
+      Port: 80
+      Protocol: HTTP
+      DefaultActions:
+        - Type: redirect
+          RedirectConfig:
+            Protocol: HTTPS
+            Port: "443"
+            Host: "#{host}"
+            Path: "/#{path}"
+            Query: "#{query}"
+            StatusCode: HTTP_301
+# Routing Rule for Python API
+  PythonListenerRule:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    DependsOn: ALBListenerHTTPS
+    Properties:
+      ListenerArn: !Ref ALBListenerHTTPS
+      Priority: 1
+      Conditions:
+        - Field: path-pattern
+          Values: 
+            - "/api/*"
+      Actions:
+        - Type: forward
+          TargetGroupArn: !Ref PythonALBTargetGroup
+
+  ####################
+  # Secrets Manager & RDS
+  ####################
+  RDSSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub "${Env}/rds/credentials"
+      GenerateSecretString:
+        SecretStringTemplate: '{"username": "admin"}'
+        GenerateStringKey: "password"
+        PasswordLength: 16
+        ExcludeCharacters: '"@/\'
+
+  RDSSecretRotationSchedule:
+    Type: AWS::SecretsManager::RotationSchedule
+    Properties:
+      SecretId: !Ref RDSSecret
+      RotationLambdaARN: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:SecretsManagerRDSPostgreSQLRotationSingleUser"
+      RotationRules:
+        AutomaticallyAfterDays: 30
+
+  RDSSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: RDS Subnet Group
+      SubnetIds:
+        - !Ref PrivateSubnet1
+        - !Ref PrivateSubnet2
+
+  RDSInstance:
+    Type: AWS::RDS::DBInstance
+    DependsOn:
+      - RDSSecurityGroup
+      - RDSSubnetGroup
+      - RDSSecret
+    Properties:
+      DBInstanceIdentifier: !Sub "${Env}-RDS"
+      AllocatedStorage: 20
+      DBInstanceClass: db.t3.micro
+      Engine: postgres
+      MasterUsername: !Join ['', ['{{resolve:secretsmanager:', !Ref RDSSecret, ':SecretString:username}}' ]]
+      MasterUserPassword: !Join ['', ['{{resolve:secretsmanager:', !Ref RDSSecret, ':SecretString:password}}' ]]
+      DBSubnetGroupName: !Ref RDSSubnetGroup
+      VPCSecurityGroups:
+        - !Ref RDSSecurityGroup
+      PubliclyAccessible: false
+      StorageType: gp2
+      BackupRetentionPeriod: 7
+
+  ####################
+  # ECS Resources
+  ####################
+  ECSCluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: !Sub "${Env}-cluster"
+      CapacityProviders:
+        - FARGATE
+      DefaultCapacityProviderStrategy:
+        - CapacityProvider: FARGATE
+          Weight: 1
+
+  # Task Execution Role
+  ECSTaskExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${Env}-ECS-TaskExecutionRole"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+      Policies:
+        - PolicyName: SecretsAndSSMAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                  - ssm:GetParameters
+                  - ssm:GetParameter
+                Resource:
+                  - !Ref RDSSecret
+                  - !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${Env}/database/*"
+
+  # Task Role
+  ECSTaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${Env}-ECS-TaskRole"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: TaskPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                  - ecr:GetAuthorizationToken
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:GetDownloadUrlForLayer
+                  - ecr:BatchGetImage
+                  - ssm:GetParameters
+                  - ssm:GetParameter
+                Resource: "*"
+
+  # CloudWatch Log Groups
+  NodeAppLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/ecs/${Env}/node-app"
+      RetentionInDays: 30
+
+  PythonAppLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/ecs/${Env}/python-app"
+      RetentionInDays: 30
+# Task Definition
+  TaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    DependsOn:
+      - ECSTaskExecutionRole
+      - ECSTaskRole
+      - NodeAppLogGroup
+      - PythonAppLogGroup
+    Properties:
+      Family: !Sub "${Env}-app"
+      RequiresCompatibilities:
+        - FARGATE
+      NetworkMode: awsvpc
+      Cpu: "256"
+      Memory: "512"
+      ExecutionRoleArn: !GetAtt ECSTaskExecutionRole.Arn
+      TaskRoleArn: !GetAtt ECSTaskRole.Arn
+      ContainerDefinitions:
+        - Name: node-app
+          Image: !Ref NodeContainerImage
+          Essential: true
+          PortMappings:
+            - ContainerPort: 3000
+              Protocol: tcp
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref NodeAppLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: node
+          Environment:
+            - Name: DB_HOST
+              Value: !GetAtt RDSInstance.Endpoint.Address
+            - Name: DB_PORT
+              Value: "5432"
+            - Name: DB_NAME
+              Value: !Sub "${Env}db"
+            - Name: DB_SECRET_ARN
+              Value: !Ref RDSSecret
+            - Name: NODE_ENV
+              Value: !Ref Env
+          HealthCheck:
+            Command:
+              - CMD-SHELL
+              - wget --no-verbose --tries=1 --spider http://localhost:3000/health || exit 1
+            Interval: 30
+            Timeout: 5
+            Retries: 3
+            StartPeriod: 60
+
+        - Name: python-app
+          Image: !Ref PythonContainerImage
+          Essential: true
+          PortMappings:
+            - ContainerPort: 5000
+              Protocol: tcp
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref PythonAppLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: python
+          Environment:
+            - Name: DB_HOST
+              Value: !GetAtt RDSInstance.Endpoint.Address
+            - Name: DB_PORT
+              Value: "5432"
+            - Name: DB_NAME
+              Value: !Sub "${Env}db"
+            - Name: DB_SECRET_ARN
+              Value: !Ref RDSSecret
+            - Name: FLASK_ENV
+              Value: !Ref Env
+          HealthCheck:
+            Command:
+              - CMD-SHELL
+              - curl -f http://localhost:5000/health || exit 1
+            Interval: 30
+            Timeout: 5
+            Retries: 3
+            StartPeriod: 60
+
+  # ECS Service
+  ECSService:
+    Type: AWS::ECS::Service
+    DependsOn:
+      - TaskDefinition
+      - ALBListenerHTTPS
+      - ALBListenerHTTP
+      - NodeALBTargetGroup
+      - PythonALBTargetGroup
+      - RDSInstance
+    Properties:
+      ServiceName: !Sub "${Env}-service"
+      Cluster: !Ref ECSCluster
+      TaskDefinition: !Ref TaskDefinition
+      DesiredCount: 2
+      LaunchType: FARGATE
+      EnableExecuteCommand: true
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: DISABLED
+          Subnets:
+            - !Ref PrivateSubnet1
+            - !Ref PrivateSubnet2
+          SecurityGroups:
+            - !Ref ECSClusterSecurityGroup
+      LoadBalancers:
+        - ContainerName: node-app
+          ContainerPort: 3000
+          TargetGroupArn: !Ref NodeALBTargetGroup
+        - ContainerName: python-app
+          ContainerPort: 5000
+          TargetGroupArn: !Ref PythonALBTargetGroup
+      DeploymentConfiguration:
+        MaximumPercent: 200
+        MinimumHealthyPercent: 100
+      DeploymentCircuitBreaker:
+        Enable: true
+        Rollback: true
+
+  # Auto Scaling
+  ServiceScalingTarget:
+    Type: AWS::ApplicationAutoScaling::ScalableTarget
+    DependsOn: ECSService
+    Properties:
+      MaxCapacity: 4
+      MinCapacity: 1
+      ResourceId: !Join
+        - /
+        - - service
+          - !Ref ECSCluster
+          - !GetAtt ECSService.Name
+      RoleARN: !Sub arn:aws:iam::${AWS::AccountId}:role/aws-service-role/ecs.application-autoscaling.amazonaws.com/AWSServiceRoleForApplicationAutoScaling_ECSService
+      ScalableDimension: ecs:service:DesiredCount
+      ServiceNamespace: ecs
+
+  # CPU Scaling Policy
+  CPUScalingPolicy:
+    Type: AWS::ApplicationAutoScaling::ScalingPolicy
+    DependsOn: ServiceScalingTarget
+    Properties:
+      PolicyName: !Sub "${Env}-cpu-scaling"
+      PolicyType: TargetTrackingScaling
+      ScalingTargetId: !Ref ServiceScalingTarget
+      TargetTrackingScalingPolicyConfiguration:
+        PredefinedMetricSpecification:
+          PredefinedMetricType: ECSServiceAverageCPUUtilization
+        TargetValue: 70.0
+        ScaleInCooldown: 60
+        ScaleOutCooldown: 60
+
+  # Memory Scaling Policy
+  MemoryScalingPolicy:
+    Type: AWS::ApplicationAutoScaling::ScalingPolicy
+    DependsOn: ServiceScalingTarget
+    Properties:
+      PolicyName: !Sub "${Env}-memory-scaling"
+      PolicyType: TargetTrackingScaling
+      ScalingTargetId: !Ref ServiceScalingTarget
+      TargetTrackingScalingPolicyConfiguration:
+        PredefinedMetricSpecification:
+          PredefinedMetricType: ECSServiceAverageMemoryUtilization
+        TargetValue: 85.0
+        ScaleInCooldown: 60
+        ScaleOutCooldown: 60
+
+  ####################
+  # DNS Record for Domain
+  ####################
+  ApplicationDNSRecord:
+    Type: AWS::Route53::RecordSet
+    DependsOn: ALB
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: !Sub "${Env}.${HostedZoneName}"
+      Type: A
+      AliasTarget:
+        DNSName: !GetAtt ALB.DNSName
+        HostedZoneId: !GetAtt ALB.CanonicalHostedZoneID
+
+Outputs:
+  ApplicationURL:
+    Description: Application URL
+    Value: !Sub "https://${Env}.${HostedZoneName}"
+
+  APIEndpoint:
+    Description: API Endpoint
+    Value: !Sub "https://${Env}.${HostedZoneName}/api"
+
+  RDSEndpoint:
+    Description: RDS Endpoint
+    Value: !GetAtt RDSInstance.Endpoint.Address
+
+  RDSSecretARN:
+    Description: RDS Secret ARN
+    Value: !Ref RDSSecret
+
+  ECSClusterName:
+    Description: ECS Cluster Name
+    Value: !Ref ECSCluster
+
+  LoadBalancerDNS:
+    Description: Load Balancer DNS Name
+    Value: !GetAtt ALB.DNSName
