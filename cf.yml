@@ -17,13 +17,13 @@ Parameters:
     Type: String
     Description: "Route 53 hosted zone ID"
 
-  NodeContainerImage:
+  NodeImageUri:
     Type: String
-    Description: "Node.js container image URI"
+    Description: "URI for Node.js container image in ECR"
 
-  PythonContainerImage:
+  PythonImageUri:
     Type: String
-    Description: "Python container image URI"
+    Description: "URI for Python container image in ECR"
 
 Mappings:
   VPCConfig:
@@ -51,6 +51,23 @@ Mappings:
       PrivateSubnet2: "10.2.4.0/24"
       AZ1: "us-east-1a"
       AZ2: "us-east-1b"
+
+  ContainerConfig:
+    dev:
+      TaskCPU: "2048"    # 2 vCPU total
+      TaskMemory: "2048" # 2 GB total
+      ContainerCPU: "1024"    # 1 vCPU each
+      ContainerMemory: "1024"  # 1 GB each
+    staging:
+      TaskCPU: "2048"
+      TaskMemory: "2048"
+      ContainerCPU: "1024"
+      ContainerMemory: "1024"
+    prod:
+      TaskCPU: "4096"    # 4 vCPU total
+      TaskMemory: "4096" # 4 GB total
+      ContainerCPU: "2048"    # 2 vCPU each
+      ContainerMemory: "2048"  # 2 GB each
 
 Conditions:
   IsProd: !Equals [!Ref Env, "prod"]
@@ -531,14 +548,16 @@ Resources:
       RequiresCompatibilities:
         - FARGATE
       NetworkMode: awsvpc
-      Cpu: "256"
-      Memory: "512"
+      Cpu: !FindInMap [ContainerConfig, !Ref Env, TaskCPU]
+      Memory: !FindInMap [ContainerConfig, !Ref Env, TaskMemory]
       ExecutionRoleArn: !GetAtt ECSTaskExecutionRole.Arn
       TaskRoleArn: !GetAtt ECSTaskRole.Arn
       ContainerDefinitions:
         - Name: node-app
-          Image: !Ref NodeContainerImage
+          Image: !Ref NodeImageUri
           Essential: true
+          Cpu: !FindInMap [ContainerConfig, !Ref Env, ContainerCPU]
+          Memory: !FindInMap [ContainerConfig, !Ref Env, ContainerMemory]
           PortMappings:
             - ContainerPort: 3000
               Protocol: tcp
@@ -569,8 +588,10 @@ Resources:
             StartPeriod: 60
 
         - Name: python-app
-          Image: !Ref PythonContainerImage
+          Image: !Ref PythonImageUri
           Essential: true
+          Cpu: !FindInMap [ContainerConfig, !Ref Env, ContainerCPU]
+          Memory: !FindInMap [ContainerConfig, !Ref Env, ContainerMemory]
           PortMappings:
             - ContainerPort: 5000
               Protocol: tcp
